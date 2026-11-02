@@ -22,6 +22,7 @@ type Coordinator struct {
 	files   []string
 	nReduce int
 	maps    []taskState
+	reduces []taskState
 }
 
 func (c *Coordinator) RequestTask(args *TaskRequest, reply *TaskReply) error {
@@ -30,12 +31,24 @@ func (c *Coordinator) RequestTask(args *TaskRequest, reply *TaskReply) error {
 	reply.Kind = WaitTask
 	reply.NMap = len(c.files)
 	reply.NReduce = c.nReduce
-	for id, state := range c.maps {
+	tasks := c.maps
+	kind := MapTask
+	if allFinished(c.maps) {
+		tasks = c.reduces
+		kind = ReduceTask
+		if allFinished(tasks) {
+			reply.Kind = ExitTask
+			return nil
+		}
+	}
+	for id, state := range tasks {
 		if state == idle {
-			c.maps[id] = running
-			reply.Kind = MapTask
+			tasks[id] = running
+			reply.Kind = kind
 			reply.ID = id
-			reply.File = c.files[id]
+			if kind == MapTask {
+				reply.File = c.files[id]
+			}
 			return nil
 		}
 	}
@@ -48,7 +61,19 @@ func (c *Coordinator) CompleteTask(args *TaskComplete, reply *CompleteReply) err
 	if args.Kind == MapTask && args.ID >= 0 && args.ID < len(c.maps) {
 		c.maps[args.ID] = finished
 	}
+	if args.Kind == ReduceTask && args.ID >= 0 && args.ID < len(c.reduces) {
+		c.reduces[args.ID] = finished
+	}
 	return nil
+}
+
+func allFinished(tasks []taskState) bool {
+	for _, state := range tasks {
+		if state != finished {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Coordinator) server(sockname string) {
@@ -67,7 +92,9 @@ func (c *Coordinator) server(sockname string) {
 }
 
 func (c *Coordinator) Done() bool {
-	return false
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return allFinished(c.maps) && allFinished(c.reduces)
 }
 
 func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator {
@@ -75,6 +102,7 @@ func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator 
 		files:   append([]string(nil), files...),
 		nReduce: nReduce,
 		maps:    make([]taskState, len(files)),
+		reduces: make([]taskState, nReduce),
 	}
 	c.server(sockname)
 	return c
