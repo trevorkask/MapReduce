@@ -36,7 +36,7 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 				log.Print(err)
 				return
 			}
-			done := TaskComplete{Kind: MapTask, ID: reply.ID}
+			done := TaskComplete{Kind: MapTask, ID: reply.ID, Attempt: reply.Attempt}
 			if !call(sockname, "Coordinator.CompleteTask", &done, &CompleteReply{}) {
 				return
 			}
@@ -45,7 +45,7 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 				log.Print(err)
 				return
 			}
-			done := TaskComplete{Kind: ReduceTask, ID: reply.ID}
+			done := TaskComplete{Kind: ReduceTask, ID: reply.ID, Attempt: reply.Attempt}
 			if !call(sockname, "Coordinator.CompleteTask", &done, &CompleteReply{}) {
 				return
 			}

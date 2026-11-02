@@ -7,6 +7,7 @@ import (
 	"net/rpc"
 	"os"
 	"sync"
+	"time"
 )
 
 type taskState int
@@ -17,12 +18,18 @@ const (
 	finished
 )
 
+type task struct {
+	state   taskState
+	started time.Time
+	attempt int
+}
+
 type Coordinator struct {
 	mu      sync.Mutex
 	files   []string
 	nReduce int
-	maps    []taskState
-	reduces []taskState
+	maps    []task
+	reduces []task
 }
 
 func (c *Coordinator) RequestTask(args *TaskRequest, reply *TaskReply) error {
@@ -41,9 +48,13 @@ func (c *Coordinator) RequestTask(args *TaskRequest, reply *TaskReply) error {
 			return nil
 		}
 	}
-	for id, state := range tasks {
-		if state == idle {
-			tasks[id] = running
+	for id := range tasks {
+		t := &tasks[id]
+		if t.state == idle || (t.state == running && time.Since(t.started) >= 10*time.Second) {
+			t.state = running
+			t.started = time.Now()
+			t.attempt++
+			reply.Attempt = t.attempt
 			reply.Kind = kind
 			reply.ID = id
 			if kind == MapTask {
@@ -58,18 +69,28 @@ func (c *Coordinator) RequestTask(args *TaskRequest, reply *TaskReply) error {
 func (c *Coordinator) CompleteTask(args *TaskComplete, reply *CompleteReply) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if args.Kind == MapTask && args.ID >= 0 && args.ID < len(c.maps) {
-		c.maps[args.ID] = finished
+	var tasks []task
+	switch args.Kind {
+	case MapTask:
+		tasks = c.maps
+	case ReduceTask:
+		tasks = c.reduces
+	default:
+		return nil
 	}
-	if args.Kind == ReduceTask && args.ID >= 0 && args.ID < len(c.reduces) {
-		c.reduces[args.ID] = finished
+	if args.ID < 0 || args.ID >= len(tasks) {
+		return nil
+	}
+	t := &tasks[args.ID]
+	if t.state == running && t.attempt == args.Attempt {
+		t.state = finished
 	}
 	return nil
 }
 
-func allFinished(tasks []taskState) bool {
-	for _, state := range tasks {
-		if state != finished {
+func allFinished(tasks []task) bool {
+	for _, t := range tasks {
+		if t.state != finished {
 			return false
 		}
 	}
@@ -101,8 +122,8 @@ func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator 
 	c := &Coordinator{
 		files:   append([]string(nil), files...),
 		nReduce: nReduce,
-		maps:    make([]taskState, len(files)),
-		reduces: make([]taskState, nReduce),
+		maps:    make([]task, len(files)),
+		reduces: make([]task, nReduce),
 	}
 	c.server(sockname)
 	return c

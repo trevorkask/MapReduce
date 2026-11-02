@@ -12,6 +12,7 @@ const (
 type TaskRequest struct{}
 
 type TaskReply struct {
+	Attempt int
 	Kind    TaskKind
 	ID      int
 	File    string
@@ -20,8 +21,9 @@ type TaskReply struct {
 }
 
 type TaskComplete struct {
-	Kind TaskKind
-	ID   int
+	Attempt int
+	Kind    TaskKind
+	ID      int
 }
 
 type CompleteReply struct{}
