@@ -1,0 +1,7 @@
+*.so
+src/main/mrcoordinator
+src/main/mrworker
+src/main/mrsequential
+src/mr/mr-tmp/
+
+src/mr/mr-tmp-*/
