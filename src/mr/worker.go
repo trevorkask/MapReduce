@@ -1,8 +1,12 @@
 package mr
 
 import (
+	"encoding/json"
+	"fmt"
 	"hash/fnv"
+	"log"
 	"net/rpc"
+	"os"
 	"time"
 )
 
@@ -25,6 +29,15 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 			return
 		}
 		switch reply.Kind {
+		case MapTask:
+			if err := runMap(reply, mapf); err != nil {
+				log.Print(err)
+				return
+			}
+			done := TaskComplete{Kind: MapTask, ID: reply.ID}
+			if !call(sockname, "Coordinator.CompleteTask", &done, &CompleteReply{}) {
+				return
+			}
 		case ExitTask:
 			return
 		default:
@@ -40,4 +53,42 @@ func call(sockname string, rpcname string, args interface{}, reply interface{}) 
 	}
 	defer client.Close()
 	return client.Call(rpcname, args, reply) == nil
+}
+
+func runMap(task TaskReply, mapf func(string, string) []KeyValue) error {
+	contents, err := os.ReadFile(task.File)
+	if err != nil {
+		return err
+	}
+	buckets := make([][]KeyValue, task.NReduce)
+	for _, kv := range mapf(task.File, string(contents)) {
+		bucket := ihash(kv.Key) % task.NReduce
+		buckets[bucket] = append(buckets[bucket], kv)
+	}
+	for bucket, pairs := range buckets {
+		name := fmt.Sprintf("mr-%d-%d", task.ID, bucket)
+		if err := writeMapFile(name, pairs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeMapFile(name string, pairs []KeyValue) error {
+	file, err := os.CreateTemp(".", "mr-map-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	enc := json.NewEncoder(file)
+	for _, kv := range pairs {
+		if err := enc.Encode(&kv); err != nil {
+			file.Close()
+			return err
+		}
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), name)
 }
