@@ -1,6 +1,7 @@
 # MapReduce
 
-A distributed MapReduce system for the MIT 6.824 lab. A coordinator assigns work to parallel workers over RPC and recovers tasks when workers fail
+A distributed MapReduce system for the MIT 6.824 lab. A coordinator assigns work to parallel workers over RPC and recovers tasks when workers fail.
+
 Some key features that I implemented:
 - Map execution and partitioned intermediate files
 - Reduce execution and sorted key grouping
