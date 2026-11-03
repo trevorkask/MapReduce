@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"path/filepath"
 	"sort"
 	"time"
 )
@@ -41,11 +42,12 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 				return
 			}
 		case ReduceTask:
-			if err := runReduce(reply, reducef); err != nil {
+			output, err := runReduce(reply, reducef)
+			if err != nil {
 				log.Print(err)
 				return
 			}
-			done := TaskComplete{Kind: ReduceTask, ID: reply.ID, Attempt: reply.Attempt}
+			done := TaskComplete{Kind: ReduceTask, ID: reply.ID, Attempt: reply.Attempt, Output: output}
 			if !call(sockname, "Coordinator.CompleteTask", &done, &CompleteReply{}) {
 				return
 			}
@@ -77,7 +79,7 @@ func runMap(task TaskReply, mapf func(string, string) []KeyValue) error {
 		buckets[bucket] = append(buckets[bucket], kv)
 	}
 	for bucket, pairs := range buckets {
-		name := fmt.Sprintf("mr-%d-%d", task.ID, bucket)
+		name := fmt.Sprintf("mr-%d-%d-%d", task.ID, task.Attempt, bucket)
 		if err := writeMapFile(name, pairs); err != nil {
 			return err
 		}
@@ -104,12 +106,12 @@ func writeMapFile(name string, pairs []KeyValue) error {
 	return os.Rename(file.Name(), name)
 }
 
-func runReduce(task TaskReply, reducef func(string, []string) string) error {
+func runReduce(task TaskReply, reducef func(string, []string) string) (string, error) {
 	var pairs []KeyValue
 	for id := 0; id < task.NMap; id++ {
-		file, err := os.Open(fmt.Sprintf("mr-%d-%d", id, task.ID))
+		file, err := os.Open(fmt.Sprintf("mr-%d-%d-%d", id, task.MapAttempts[id], task.ID))
 		if err != nil {
-			return err
+			return "", err
 		}
 		dec := json.NewDecoder(file)
 		for {
@@ -120,18 +122,18 @@ func runReduce(task TaskReply, reducef func(string, []string) string) error {
 			}
 			if err != nil {
 				file.Close()
-				return err
+				return "", err
 			}
 			pairs = append(pairs, kv)
 		}
 		if err := file.Close(); err != nil {
-			return err
+			return "", err
 		}
 	}
 	sort.Slice(pairs, func(i, j int) bool { return pairs[i].Key < pairs[j].Key })
 	file, err := os.CreateTemp(".", "mr-reduce-*")
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer os.Remove(file.Name())
 	for i := 0; i < len(pairs); {
@@ -143,12 +145,19 @@ func runReduce(task TaskReply, reducef func(string, []string) string) error {
 		}
 		if _, err := fmt.Fprintf(file, "%v %v\n", pairs[i].Key, reducef(pairs[i].Key, values)); err != nil {
 			file.Close()
-			return err
+			return "", err
 		}
 		i = j
 	}
 	if err := file.Close(); err != nil {
-		return err
+		return "", err
 	}
-	return os.Rename(file.Name(), fmt.Sprintf("mr-out-%d", task.ID))
+	output, err := filepath.Abs(fmt.Sprintf("mr-reduce-%d-%d", task.ID, task.Attempt))
+	if err != nil {
+		return "", err
+	}
+	if err := os.Rename(file.Name(), output); err != nil {
+		return "", err
+	}
+	return output, nil
 }

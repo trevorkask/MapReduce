@@ -12,15 +12,17 @@ const (
 type TaskRequest struct{}
 
 type TaskReply struct {
-	Attempt int
-	Kind    TaskKind
-	ID      int
-	File    string
-	NMap    int
-	NReduce int
+	MapAttempts []int
+	Attempt     int
+	Kind        TaskKind
+	ID          int
+	File        string
+	NMap        int
+	NReduce     int
 }
 
 type TaskComplete struct {
+	Output  string
 	Attempt int
 	Kind    TaskKind
 	ID      int

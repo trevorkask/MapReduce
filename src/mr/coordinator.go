@@ -1,11 +1,13 @@
 package mr
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -43,6 +45,10 @@ func (c *Coordinator) RequestTask(args *TaskRequest, reply *TaskReply) error {
 	if allFinished(c.maps) {
 		tasks = c.reduces
 		kind = ReduceTask
+		reply.MapAttempts = make([]int, len(c.maps))
+		for id, t := range c.maps {
+			reply.MapAttempts[id] = t.attempt
+		}
 		if allFinished(tasks) {
 			reply.Kind = ExitTask
 			return nil
@@ -83,6 +89,12 @@ func (c *Coordinator) CompleteTask(args *TaskComplete, reply *CompleteReply) err
 	}
 	t := &tasks[args.ID]
 	if t.state == running && t.attempt == args.Attempt {
+		if args.Kind == ReduceTask {
+			destination := filepath.Join(filepath.Dir(args.Output), fmt.Sprintf("mr-out-%d", args.ID))
+			if err := os.Rename(args.Output, destination); err != nil {
+				return err
+			}
+		}
 		t.state = finished
 	}
 	return nil
